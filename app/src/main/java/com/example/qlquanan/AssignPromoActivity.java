@@ -70,7 +70,13 @@ public class AssignPromoActivity extends AppCompatActivity {
                 Connection conn = new SQLConnection().connection();
                 if (conn != null) {
                     // LƯU Ý: Thay DonGia bằng cột giá trong bảng MonAn của bạn
-                    String sql = "SELECT MaMon, TenMon, DonGia, MaKM FROM MonAn WHERE TrangThai = 1";
+                    // Ép SQL kiểm tra chéo: Chỉ lấy MaKM lên NẾU Khuyến mãi đó chưa hết hạn và đang được kích hoạt
+                    String sql = "SELECT m.MaMon, m.TenMon, m.DonGia, k.MaKM " +
+                            "FROM MonAn m " +
+                            "LEFT JOIN KhuyenMai k ON m.MaKM = k.MaKM " +
+                            "AND k.NgayKetThuc >= CAST(GETDATE() AS DATE) " +
+                            "AND k.TrangThai = 1 " +
+                            "WHERE m.TrangThai = 1";
                     Statement stmt = conn.createStatement();
                     ResultSet rs = stmt.executeQuery(sql);
 

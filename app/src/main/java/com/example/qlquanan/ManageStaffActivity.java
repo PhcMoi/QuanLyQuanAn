@@ -65,7 +65,7 @@ public class ManageStaffActivity extends AppCompatActivity {
                 Connection conn = new SQLConnection().connection();
                 if (conn != null) {
                     // Lấy những nhân viên đang có TrangThai = 1 (Đang làm việc)
-                    String sql = "SELECT nv.MaNV, nv.TenNV, nv.SDT, tk.Username, tk.VaiTro, tk.Password " +
+                    String sql = "SELECT nv.MaNV, nv.TenNV, nv.SDT, nv.DiaChi, tk.Username, tk.VaiTro, tk.Password " +
                             "FROM NhanVien nv JOIN TaiKhoan tk ON nv.MaNV = tk.MaNV WHERE nv.TrangThai = 1";
                     Statement stmt = conn.createStatement();
                     ResultSet rs = stmt.executeQuery(sql);
@@ -73,6 +73,7 @@ public class ManageStaffActivity extends AppCompatActivity {
                     while (rs.next()) {
                         tempList.add(new StaffModel(
                                 rs.getString("MaNV"), rs.getString("TenNV"), rs.getString("SDT"),
+                                rs.getString("DiaChi"), // Thêm dòng này để hứng dữ liệu
                                 rs.getString("Username"), rs.getString("VaiTro"), rs.getString("Password")
                         ));
                     }
@@ -133,7 +134,7 @@ public class ManageStaffActivity extends AppCompatActivity {
             boolean isMale = rbMale.isChecked();
             String username = edtUsername.getText().toString().trim();
             String password = edtPassword.getText().toString().trim();
-            String role = rbAdmin.isChecked() ? "QuanLy" : "NhanVien";
+            String role = rbAdmin.isChecked() ? "1" : "0";
 
             if (fullName.isEmpty() || username.isEmpty() || password.isEmpty() || joinDate.contains("Bấm để chọn")) {
                 Toast.makeText(this, "Vui lòng nhập đủ thông tin bắt buộc!", Toast.LENGTH_SHORT).show();
@@ -156,7 +157,7 @@ public class ManageStaffActivity extends AppCompatActivity {
             try {
                 conn = new SQLConnection().connection();
                 if (conn != null) {
-                    conn.setAutoCommit(false);
+                    conn.setAutoCommit(false); // Bật khiên bảo vệ Transaction
 
                     // 1. Check User trùng lặp
                     PreparedStatement stmtCheck = conn.prepareStatement("SELECT Username FROM TaiKhoan WHERE Username = ?");
@@ -164,28 +165,42 @@ public class ManageStaffActivity extends AppCompatActivity {
                     if (stmtCheck.executeQuery().next()) throw new Exception("Tên đăng nhập đã tồn tại!");
                     stmtCheck.close();
 
-                    // 2. Sinh MaNV tự động (NV001, NV002...)
-                    String newMaNV = "NV001";
-                    PreparedStatement pstMax = conn.prepareStatement("SELECT MAX(CAST(SUBSTRING(MaNV, 3, LEN(MaNV)) AS INT)) FROM NhanVien WHERE MaNV LIKE 'NV%'");
-                    ResultSet rsMax = pstMax.executeQuery();
-                    if (rsMax.next() && !rsMax.wasNull()) {
-                        newMaNV = String.format("NV%03d", rsMax.getInt(1) + 1);
+                    // 2. INSERT Nhân Viên & Bắt lấy mã SQL vừa tự sinh ra
+                    // TUYỆT ĐỐI KHÔNG INSERT MaNV, nhưng dùng OUTPUT INSERTED.MaNV để hứng mã về
+                    String sqlInsertNV = "INSERT INTO NhanVien (TenNV, Phai, SDT, NgayVaoLam, DiaChi, TrangThai) " +
+                            "OUTPUT INSERTED.MaNV " +
+                            "VALUES (?, ?, ?, ?, ?, 1)";
+
+                    PreparedStatement stmtNV = conn.prepareStatement(sqlInsertNV);
+                    stmtNV.setString(1, tenNV);
+                    stmtNV.setBoolean(2, isMale);
+                    stmtNV.setString(3, sdt.isEmpty() ? null : sdt);
+                    stmtNV.setString(4, ngayVaoLam);
+                    stmtNV.setString(5, diaChi.isEmpty() ? null : diaChi);
+
+                    // Vì có mệnh đề OUTPUT trả về data, ta phải dùng executeQuery thay vì executeUpdate
+                    ResultSet rsNV = stmtNV.executeQuery();
+                    String newMaNV = "";
+                    if (rsNV.next()) {
+                        newMaNV = rsNV.getString("MaNV"); // Chộp ngay cái mã NV... vừa ra lò!
                     }
-                    rsMax.close(); pstMax.close();
+                    rsNV.close();
+                    stmtNV.close();
 
-                    // 3. Insert NhanVien
-                    PreparedStatement stmtNV = conn.prepareStatement("INSERT INTO NhanVien (MaNV, TenNV, Phai, SDT, NgayVaoLam, DiaChi, TrangThai) VALUES (?, ?, ?, ?, ?, ?, 1)");
-                    stmtNV.setString(1, newMaNV); stmtNV.setString(2, tenNV); stmtNV.setBoolean(3, isMale);
-                    stmtNV.setString(4, sdt.isEmpty() ? null : sdt); stmtNV.setString(5, ngayVaoLam); stmtNV.setString(6, diaChi.isEmpty() ? null : diaChi);
-                    stmtNV.executeUpdate(); stmtNV.close();
+                    if (newMaNV.isEmpty()) throw new Exception("Hệ thống SQL không thể tự sinh mã nhân viên!");
 
-                    // 4. Insert TaiKhoan
+                    // 3. INSERT Tài Khoản bằng chính cái mã vừa chộp được
                     PreparedStatement stmtTK = conn.prepareStatement("INSERT INTO TaiKhoan (Username, Password, VaiTro, MaNV) VALUES (?, ?, ?, ?)");
-                    stmtTK.setString(1, user); stmtTK.setString(2, pass); stmtTK.setString(3, role); stmtTK.setString(4, newMaNV);
-                    stmtTK.executeUpdate(); stmtTK.close();
+                    stmtTK.setString(1, user);
+                    stmtTK.setString(2, pass);
+                    stmtTK.setString(3, role); // role lúc này đã là "1" hoặc "0" nhờ bản fix trước
+                    stmtTK.setString(4, newMaNV);
+                    stmtTK.executeUpdate();
+                    stmtTK.close();
 
-                    // Chốt giao dịch
-                    conn.commit(); isSuccess = true;
+                    // Chốt giao dịch thành công
+                    conn.commit();
+                    isSuccess = true;
                 }
             } catch (Exception e) {
                 error = e.getMessage();
@@ -229,13 +244,19 @@ public class ManageStaffActivity extends AppCompatActivity {
         if (tvTitle != null) tvTitle.setText("Sửa Thông Tin: " + staff.getTenNV());
         edtFullName.setText(staff.getTenNV());
         edtPhone.setText(staff.getSdt());
+        edtFullName.setText(staff.getTenNV());
+        edtPhone.setText(staff.getSdt());
         tvJoinDate.setText("Bấm để đổi ngày làm (Tùy chọn)");
 
         edtUsername.setText(staff.getUsername());
         edtUsername.setEnabled(false);
         edtUsername.setBackgroundColor(android.graphics.Color.parseColor("#E0E0E0"));
 
-        if (staff.getVaiTro() != null && staff.getVaiTro().equalsIgnoreCase("QuanLy")) {
+        if (staff.getDiaChi() != null) {
+            edtAddress.setText(staff.getDiaChi());
+        }
+
+        if (staff.getVaiTro() != null && staff.getVaiTro().equals("1")) {
             rbAdmin.setChecked(true);
         } else {
             rbStaff.setChecked(true);
@@ -253,8 +274,11 @@ public class ManageStaffActivity extends AppCompatActivity {
         btnSaveEmployee.setOnClickListener(v -> {
             String fullName = edtFullName.getText().toString().trim();
             String phone = edtPhone.getText().toString().trim();
+            String address = edtAddress.getText().toString().trim(); // Bổ sung lấy Địa chỉ
             String pass = edtPassword.getText().toString().trim();
-            String role = rbAdmin.isChecked() ? "QuanLy" : "NhanVien";
+
+            // ĐÃ FIX: Chuyển thành số 1 và 0 để SQL Server nuốt trôi
+            String role = rbAdmin.isChecked() ? "1" : "0";
 
             if (fullName.isEmpty()) {
                 Toast.makeText(this, "Tên nhân viên không được để trống!", Toast.LENGTH_SHORT).show();
@@ -264,12 +288,14 @@ public class ManageStaffActivity extends AppCompatActivity {
             btnSaveEmployee.setEnabled(false);
             btnSaveEmployee.setText("Đang cập nhật...");
 
-            updateStaffInDatabase(staff.getMaNV(), fullName, phone, pass, role, dialog, btnSaveEmployee);
+            // Truyền thêm address vào hàm
+            updateStaffInDatabase(staff.getMaNV(), fullName, phone, address, pass, role, dialog, btnSaveEmployee);
         });
         dialog.show();
     }
 
-    private void updateStaffInDatabase(String maNV, String tenNV, String sdt, String pass, String role, AlertDialog dialog, Button btnSave) {
+    // Đã thêm String address vào tham số
+    private void updateStaffInDatabase(String maNV, String tenNV, String sdt, String address, String pass, String role, AlertDialog dialog, Button btnSave) {
         ExecutorService executor = Executors.newSingleThreadExecutor();
         Handler handler = new Handler(Looper.getMainLooper());
         executor.execute(() -> {
@@ -279,12 +305,15 @@ public class ManageStaffActivity extends AppCompatActivity {
                 if (conn != null) {
                     conn.setAutoCommit(false);
 
-                    // 1. Update bảng NhanVien
-                    PreparedStatement stmtNV = conn.prepareStatement("UPDATE NhanVien SET TenNV = ?, SDT = ? WHERE MaNV = ?");
-                    stmtNV.setString(1, tenNV); stmtNV.setString(2, sdt); stmtNV.setString(3, maNV);
+                    // 1. Update bảng NhanVien (Bổ sung thêm cột DiaChi)
+                    PreparedStatement stmtNV = conn.prepareStatement("UPDATE NhanVien SET TenNV = ?, SDT = ?, DiaChi = ? WHERE MaNV = ?");
+                    stmtNV.setString(1, tenNV);
+                    stmtNV.setString(2, sdt);
+                    stmtNV.setString(3, address); // Lưu địa chỉ mới
+                    stmtNV.setString(4, maNV);
                     stmtNV.executeUpdate(); stmtNV.close();
 
-                    // 2. Update bảng TaiKhoan (chỉ đổi pass nếu người dùng có nhập)
+                    // 2. Update bảng TaiKhoan (role bây giờ là "0" hoặc "1")
                     String sqlTK = "UPDATE TaiKhoan SET VaiTro = ? " + (pass.isEmpty() ? "" : ", Password = ? ") + "WHERE MaNV = ?";
                     PreparedStatement stmtTK = conn.prepareStatement(sqlTK);
                     stmtTK.setString(1, role);

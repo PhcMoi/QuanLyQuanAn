@@ -180,13 +180,8 @@ public class ManageTableActivity extends AppCompatActivity {
                         stmt.executeUpdate();
                         stmt.close();
                     } else {
-                        // CHẾ ĐỘ THÊM: Tự động đếm BA0001, BA0002...
-                        String sqlInsert =
-                                "DECLARE @NextID INT; " +
-                                        "SELECT @NextID = ISNULL(MAX(CAST(SUBSTRING(MaBan, 3, 10) AS INT)), 0) + 1 " +
-                                        "FROM Ban WHERE MaBan LIKE 'BA%'; " +
-                                        "DECLARE @NewMaBan VARCHAR(20) = 'BA' + RIGHT('0000' + CAST(@NextID AS VARCHAR), 4); " +
-                                        "INSERT INTO Ban (MaBan, TenBan, TrangThai) VALUES (@NewMaBan, ?, 0);";
+                        // CHẾ ĐỘ THÊM: Giao phó toàn bộ việc sinh mã cho SQL Server
+                        String sqlInsert = "INSERT INTO Ban (TenBan, TrangThai) VALUES (?, 0);";
 
                         stmt = conn.prepareStatement(sqlInsert);
                         stmt.setString(1, tenBan);
